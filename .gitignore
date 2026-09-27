@@ -26,6 +26,7 @@ signing.properties
 *.sqlite
 *.sqlite3
 captures/
+dist/
 
 # Optional tooling
 node_modules/
