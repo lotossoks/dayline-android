@@ -1,0 +1,33 @@
+# Local IDE and build state
+.idea/
+*.iml
+.gradle/
+.kotlin/
+**/build/
+local.properties
+.DS_Store
+
+# Signing material and local credentials
+*.jks
+*.keystore
+keystore.properties
+signing.properties
+.env
+.env.*
+!.env.example
+
+# Generated deliverables and device data
+*.apk
+*.aab
+*.log
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+captures/
+
+# Optional tooling
+node_modules/
+__pycache__/
+.venv/
