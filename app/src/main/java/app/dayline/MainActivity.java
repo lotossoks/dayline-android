@@ -25,10 +25,14 @@ public final class MainActivity extends Activity {
     Store store;Snapshot data;final ZoneId zone=ZoneId.systemDefault();
     long groupId=1,analysisGroup=0;int mode=0;boolean weekly=true,archived=false,zoom=false;
     LocalDate selectedDate=LocalDate.now();String query="";int historyLimit=30;
+    final Set<Long> selectedTasks=new LinkedHashSet<>();
+    boolean selectionActive=false,averageMode=false;int averageWeekday=0;
+    TextView selectionSummary;
     private LinearLayout root,body,taskList;private ScrollView scroll;
     private final List<Runnable> live=new ArrayList<>(),taskLive=new ArrayList<>();
     private final Handler handler=new Handler(Looper.getMainLooper());private TimelineView timeline;
     private LocalDate renderedToday;private boolean resumed;
+    private Set<Long> exportTasks;
     private long exportGroup;private LocalDate exportWeek=TimeMath.monday(LocalDate.now());
     private final java.util.concurrent.ExecutorService files=Executors.newSingleThreadExecutor();
     private final Runnable ticker=new Runnable(){@Override public void run(){if(!resumed)return;if(!LocalDate.now().equals(renderedToday)){if(selectedDate.equals(renderedToday))selectedDate=LocalDate.now();render(false);}else{for(Runnable r:live)r.run();for(Runnable r:taskLive)r.run();if(timeline!=null)timeline.invalidate();}handler.postDelayed(this,1000);}};
@@ -36,7 +40,9 @@ public final class MainActivity extends Activity {
 
     @Override public void onCreate(Bundle saved){
         super.onCreate(saved);getWindow().addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS);getWindow().setStatusBarColor(BG);getWindow().setNavigationBarColor(Build.VERSION.SDK_INT>=27?BG:GREEN);store=Store.get(this);groupId=getPreferences(0).getLong("group",1);
-        if(saved!=null){groupId=saved.getLong("group",1);analysisGroup=saved.getLong("analysisGroup",0);mode=saved.getInt("mode",0);weekly=saved.getBoolean("weekly",true);selectedDate=LocalDate.parse(saved.getString("date",LocalDate.now().toString()));query=saved.getString("query","");archived=saved.getBoolean("archived",false);exportGroup=saved.getLong("exportGroup",0);exportWeek=LocalDate.parse(saved.getString("exportWeek",LocalDate.now().toString()));}
+        selectionActive=getPreferences(0).getBoolean("selectionActive",false);
+        for(String id:getPreferences(0).getStringSet("selectedTasks",Collections.emptySet()))try{selectedTasks.add(Long.parseLong(id));}catch(NumberFormatException ignored){}
+        if(saved!=null){if(saved.containsKey("exportTasks")){exportTasks=new LinkedHashSet<>();for(long id:saved.getLongArray("exportTasks"))exportTasks.add(id);}averageMode=saved.getBoolean("averageMode",false);averageWeekday=saved.getInt("averageWeekday",0);groupId=saved.getLong("group",1);analysisGroup=saved.getLong("analysisGroup",0);mode=saved.getInt("mode",0);weekly=saved.getBoolean("weekly",true);selectedDate=LocalDate.parse(saved.getString("date",LocalDate.now().toString()));query=saved.getString("query","");archived=saved.getBoolean("archived",false);exportGroup=saved.getLong("exportGroup",0);exportWeek=LocalDate.parse(saved.getString("exportWeek",LocalDate.now().toString()));}
         if(Build.VERSION.SDK_INT>=33)registerReceiver(receiver,new IntentFilter(TimerService.CHANGED),Context.RECEIVER_NOT_EXPORTED);else registerLegacyUpdates();
         render(false);
     }
@@ -48,7 +54,7 @@ public final class MainActivity extends Activity {
     @Override protected void onResume(){super.onResume();resumed=true;render(true);syncService();handler.removeCallbacks(ticker);handler.post(ticker);}
     @Override protected void onPause(){resumed=false;handler.removeCallbacks(ticker);super.onPause();}
     @Override protected void onDestroy(){handler.removeCallbacksAndMessages(null);unregisterReceiver(receiver);files.shutdown();super.onDestroy();}
-    @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);out.putLong("group",groupId);out.putLong("analysisGroup",analysisGroup);out.putInt("mode",mode);out.putBoolean("weekly",weekly);out.putString("date",selectedDate.toString());out.putString("query",query);out.putBoolean("archived",archived);out.putLong("exportGroup",exportGroup);out.putString("exportWeek",exportWeek.toString());}
+    @Override protected void onSaveInstanceState(Bundle out){super.onSaveInstanceState(out);if(exportTasks!=null){long[] ids=new long[exportTasks.size()];int at=0;for(long id:exportTasks)ids[at++]=id;out.putLongArray("exportTasks",ids);}out.putBoolean("averageMode",averageMode);out.putInt("averageWeekday",averageWeekday);out.putLong("group",groupId);out.putLong("analysisGroup",analysisGroup);out.putInt("mode",mode);out.putBoolean("weekly",weekly);out.putString("date",selectedDate.toString());out.putString("query",query);out.putBoolean("archived",archived);out.putLong("exportGroup",exportGroup);out.putString("exportWeek",exportWeek.toString());}
     void changed(boolean preserve){render(preserve);syncService();}
     void syncService(){try{TimerService.sync(this);}catch(RuntimeException e){toast("Записи сохранены. Уведомление недоступно — проверьте настройки приложения.");}}
     void toast(String s){Toast.makeText(this,s,Toast.LENGTH_LONG).show();}
@@ -58,12 +64,13 @@ public final class MainActivity extends Activity {
     void render(boolean preserveScroll){
         int oldY=preserveScroll&&scroll!=null?scroll.getScrollY():0;
         data=store.snapshot();if(data.group(groupId)==null&&!data.groups.isEmpty())groupId=data.groups.get(0).id;if(analysisGroup!=0&&data.group(analysisGroup)==null)analysisGroup=0;
-        renderedToday=LocalDate.now();live.clear();taskLive.clear();timeline=null;
+        renderedToday=LocalDate.now();live.clear();taskLive.clear();timeline=null;selectionSummary=null;selectedTasks.removeIf(id->data.task(id)==null);
         root=column(this);root.setBackgroundColor(BG);
         if(Build.VERSION.SDK_INT>=30){getWindow().setDecorFitsSystemWindows(false);root.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets system=insets.getInsets(WindowInsets.Type.systemBars()|WindowInsets.Type.ime());v.setPadding(system.left,system.top,system.right,system.bottom);return insets;});}
         LinearLayout brand=row(this);pad(brand,22,12);
         LinearLayout title=column(this);add(title,text(this,"Dayline",28,INK,true),0);add(title,label(this,mode==0?"Ваш день, занятие за занятием":"Понятная картина вашего времени"),4);weight(brand,title);
         TextView options=button(this,"•••",false,this::settings);options.setContentDescription("Настройки и экспорт");brand.addView(options,new LinearLayout.LayoutParams(dp(this,48),dp(this,48)));root.addView(brand);
+        if(mode==1&&selectionActive)addSelectionBar();
         scroll=new ScrollView(this);scroll.setFillViewport(true);scroll.setClipToPadding(false);scroll.setVerticalScrollBarEnabled(false);
         body=column(this);pad(body,20,8);scroll.addView(body);root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));
         if(mode==0)tracking();else analysis();
@@ -74,7 +81,7 @@ public final class MainActivity extends Activity {
         if(Build.VERSION.SDK_INT>=30){WindowInsetsController bars=getWindow().getInsetsController();if(bars!=null)bars.setSystemBarsAppearance(WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS|WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS);}
         root.requestApplyInsets();scroll.post(()->scroll.scrollTo(0,oldY));for(Runnable r:live)r.run();for(Runnable r:taskLive)r.run();
     }
-    private void tabs(LinearLayout parent,boolean forAnalysis){
+    void tabs(LinearLayout parent,boolean forAnalysis){
         HorizontalScrollView sc=new HorizontalScrollView(this);sc.setHorizontalScrollBarEnabled(false);LinearLayout tabs=row(this);
         if(forAnalysis)tab(tabs,"Все",analysisGroup==0,()->{analysisGroup=0;render(false);});
         for(Group g:data.groups){boolean active=forAnalysis?analysisGroup==g.id:groupId==g.id;String n=g.name+(data.runningCount(g.id)>0?" •":"");tab(tabs,n,active,()->{if(forAnalysis)analysisGroup=g.id;else{groupId=g.id;archived=false;getPreferences(0).edit().putLong("group",groupId).apply();}render(false);});}
@@ -127,60 +134,35 @@ public final class MainActivity extends Activity {
         String[] items={"История и правки","Изменить задачу","Добавить время вручную",task.archived?"Вернуть в открытые":"Завершить задачу"};
         new AlertDialog.Builder(this).setTitle(task.name).setItems(items,(d,which)->{Editors ed=new Editors(this);if(which==0)ed.history(task);if(which==1)ed.task(task,task.groupId);if(which==2)ed.session(null,task.id);if(which==3)safe(()->{store.archive(task.id,!task.archived,System.currentTimeMillis());changed(true);toast(task.archived?"Задача снова открыта":"Задача завершена. История сохранена.");});}).show();
     }
-    private void analysis(){
-        LinearLayout controls=row(this);tab(controls,"День",!weekly,()->{weekly=false;historyLimit=30;render(false);});tab(controls,"Неделя",weekly,()->{weekly=true;historyLimit=30;render(false);});weight(controls,new Space(this));controls.addView(button(this,"＋",false,this::addMenu));add(body,controls,0);
-        LinearLayout dateRow=row(this);dateRow.addView(button(this,"‹",false,()->{selectedDate=selectedDate.minusDays(weekly?7:1);historyLimit=30;render(false);}));
-        LocalDate first=weekly?TimeMath.monday(selectedDate):selectedDate;
-        String dateText=weekly?first.format(DateTimeFormatter.ofPattern("d MMM",TimeMath.RU))+" — "+first.plusDays(6).format(DateTimeFormatter.ofPattern("d MMM",TimeMath.RU)):first.format(DateTimeFormatter.ofPattern("d MMMM, EEE",TimeMath.RU));
-        TextView period=text(this,dateText,17,INK,true);period.setGravity(Gravity.CENTER);weight(dateRow,period);
-        TextView next=button(this,"›",false,()->{selectedDate=selectedDate.plusDays(weekly?7:1);historyLimit=30;render(false);});boolean canNext=weekly?TimeMath.monday(selectedDate).isBefore(TimeMath.monday(LocalDate.now())):selectedDate.isBefore(LocalDate.now());next.setEnabled(canNext);next.setAlpha(canNext?1f:.35f);dateRow.addView(next);add(body,dateRow,16);
-        if((weekly&&!first.equals(TimeMath.monday(LocalDate.now())))||(!weekly&&!first.equals(LocalDate.now())))add(body,button(this,weekly?"К текущей неделе":"К сегодняшнему дню",false,()->{selectedDate=LocalDate.now();render(false);}),8);
-        tabs(body,true);
-        long from=TimeMath.start(first,zone),to=TimeMath.start(first.plusDays(weekly?7:1),zone);List<Session> selected=data.forGroup(analysisGroup);
-        LinearLayout stats=row(this);LinearLayout a=card(this),b=card(this);TextView sum=text(this,"",22,INK,true),union=text(this,"",22,GREEN,true);add(a,label(this,"Время задач"),0);add(a,sum,9);add(b,label(this,"Без пересечений"),0);add(b,union,9);weight(stats,a);Space gap=new Space(this);stats.addView(gap,new LinearLayout.LayoutParams(dp(this,8),1));weight(stats,b);add(body,stats,16);
-        TextView uncovered=label(this,"");add(body,uncovered,12);
-        live.add(()->{long now=System.currentTimeMillis(),s=TimeMath.sum(selected,from,to,now),u=TimeMath.union(selected,from,to,now);sum.setText(TimeMath.shortTime(s));union.setText(TimeMath.shortTime(u));long missed=Math.max(0,Math.min(to,now)-from)-u;uncovered.setText((analysisGroup==0?"Не учтено: ":"Вне этой группы: ")+TimeMath.shortTime(missed));});
-        TextView explanation=label(this,"Время задач складывается. Пересекающиеся занятия в правой сумме учитываются один раз.");add(body,explanation,8);
-        LinearLayout chart=card(this);LinearLayout chartHead=row(this);weight(chartHead,text(this,"Лента времени",18,INK,true));TextView z=button(this,zoom?"Уместить":"Крупнее",false,()->{zoom=!zoom;render(true);});z.setTextSize(12);chartHead.addView(z);add(chart,chartHead,0);
-        add(chart,label(this,"Нажмите на занятие для правки или на пустой участок, чтобы заполнить его"),8);
-        timeline=new TimelineView(this,data,selectedDate,weekly,analysisGroup,new TimelineView.Listener(){public void open(Session s){new Editors(MainActivity.this).sessionActions(s);}public void empty(long from,long to){new Editors(MainActivity.this).addBetween(from,to);}});
-        if(zoom){HorizontalScrollView horizontal=new HorizontalScrollView(this);horizontal.setHorizontalScrollBarEnabled(true);horizontal.addView(timeline,new android.widget.FrameLayout.LayoutParams(dp(this,1000),-2));add(chart,horizontal,12);}else add(chart,timeline,12);
-        add(body,chart,20);
-        add(body,button(this,"Экспорт недели в Excel",true,this::exportDialog),16);
-        LinearLayout actionRow=row(this);weight(actionRow,button(this,"＋ Записать время",false,()->new Editors(this).session(null,0)));Space spacer=new Space(this);actionRow.addView(spacer,new LinearLayout.LayoutParams(dp(this,8),1));weight(actionRow,button(this,"＋ Задача",false,()->new Editors(this).task(null,analysisGroup==0?groupId:analysisGroup)));add(body,actionRow,10);
-        if(store.canUndo())add(body,button(this,"↶ Отменить последнюю правку",false,()->safe(()->{store.undo();changed(true);})),10);
-        if(analysisGroup==0){
-            add(body,text(this,"По группам",20,INK,true),24);
-            for(Group g:data.groups){
-                LinearLayout card=card(this);LinearLayout line=row(this);weight(line,text(this,g.name,17,g.color,true));TextView value=text(this,"",15,INK,true);line.addView(value);add(card,line,0);
-                ProgressBar bar=new ProgressBar(this,null,android.R.attr.progressBarStyleHorizontal);bar.setMax(1000);bar.setProgressTintList(android.content.res.ColorStateList.valueOf(g.color));bar.setProgressBackgroundTintList(android.content.res.ColorStateList.valueOf(LINE));add(card,bar,10);
-                TextView actual=label(this,"");add(card,actual,7);card.setOnClickListener(v->{analysisGroup=g.id;render(false);});add(body,card,8);
-                live.add(()->{long captured=System.currentTimeMillis(),n=TimeMath.sum(data.forGroup(g.id),from,to,captured),all=TimeMath.sum(data.sessions,from,to,captured);value.setText(TimeMath.shortTime(n));bar.setProgress(all==0?0:(int)(1000*n/all));actual.setText("Без пересечений: "+TimeMath.shortTime(TimeMath.union(data.forGroup(g.id),from,to,captured)));});
-            }
-        }
-        add(body,text(this,"По задачам",20,INK,true),24);
-        List<Task> tasks=new ArrayList<>(data.tasks);long now=System.currentTimeMillis();tasks.sort((x,y)->Long.compare(TimeMath.sum(data.forTask(y.id),from,to,now),TimeMath.sum(data.forTask(x.id),from,to,now)));
-        int count=0;for(Task t:tasks){long n=TimeMath.sum(data.forTask(t.id),from,to,now);if(n==0||(analysisGroup!=0&&t.groupId!=analysisGroup))continue;count++;LinearLayout line=card(this);LinearLayout row=row(this);TextView title=text(this,t.name,16,INK,true);title.setMaxLines(2);weight(row,title);TextView v=text(this,TimeMath.shortTime(n),15,GREEN,true);row.addView(v);add(line,row,0);add(line,label(this,data.group(t.groupId).name+(t.archived?" · завершена":"")),6);line.setOnClickListener(x->new Editors(this).history(t));add(body,line,8);live.add(()->v.setText(TimeMath.shortTime(TimeMath.sum(data.forTask(t.id),from,to,System.currentTimeMillis()))));}
-        if(count==0)add(body,label(this,"Здесь появятся занятия за выбранный период."),10);
-        add(body,text(this,"Записи и исправления",20,INK,true),24);int displayed=0,total=0;
-        for(Session s:selected)if(TimeMath.duration(s,from,to,now)>0){total++;if(displayed++>=historyLimit)continue;Task t=data.task(s.taskId);TextView record=button(this,t.name+"\n"+TimeMath.dateTime(s.start,zone)+" — "+(s.running()?"идёт":TimeMath.dateTime(s.end,zone)),false,()->new Editors(this).sessionActions(s));record.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);record.setTextSize(14);add(body,record,8);}
-        if(total>historyLimit)add(body,button(this,"Показать ещё записи",false,()->{historyLimit+=50;render(true);}),10);
-        gap(body,12);
+    private void analysis(){new AnalysisScreen(this,body,live).render();}
+    void setTimeline(TimelineView view){timeline=view;}
+    Set<Long> selectionFilter(){return selectionActive?new LinkedHashSet<>(selectedTasks):null;}
+    void saveSelection(){Set<String> ids=new HashSet<>();for(long id:selectedTasks)ids.add(Long.toString(id));getPreferences(0).edit().putBoolean("selectionActive",selectionActive).putStringSet("selectedTasks",ids).apply();}
+    void toggleSelection(long taskId){selectionActive=true;if(!selectedTasks.add(taskId))selectedTasks.remove(taskId);saveSelection();render(true);}
+    void clearSelection(){selectedTasks.clear();selectionActive=false;saveSelection();render(true);}
+    private void addSelectionBar(){
+        LinearLayout box=column(this);pad(box,20,8);box.setBackgroundColor(MINT);LinearLayout line=row(this);
+        TextView title=text(this,"Выбрано задач: "+selectedTasks.size(),15,GREEN,true);weight(line,title);
+        TextView edit=button(this,"Изменить",false,()->new AnalysisScreen(this,body,live).chooseTasks());edit.setTextSize(13);line.addView(edit);
+        TextView close=button(this,"×",false,this::clearSelection);close.setContentDescription("Закрыть выбор задач");line.addView(close,new LinearLayout.LayoutParams(dp(this,48),dp(this,48)));add(box,line,0);
+        selectionSummary=text(this,"",13,INK,true);selectionSummary.setContentDescription("Итоги выбранных задач");add(box,selectionSummary,3);root.addView(box);
     }
     void addMenu(){new AlertDialog.Builder(this).setTitle("Добавить").setItems(new String[]{"Задачу","Группу","Время вручную"},(d,w)->{Editors e=new Editors(this);if(w==0)e.task(null,analysisGroup==0?groupId:analysisGroup);if(w==1)e.group(null);if(w==2)e.session(null,0);}).show();}
     private void settings(){new AlertDialog.Builder(this).setTitle("Dayline").setItems(new String[]{"Экспорт недели в Excel","Сохранить резервную копию","Восстановить из копии","Настройки уведомлений","Как работает учёт"},(d,w)->{
         if(w==0)exportDialog();if(w==1)createDocument("application/json","dayline-backup-"+LocalDate.now()+".json",101);
         if(w==2){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,102);}
         if(w==3)startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));
-        if(w==4)new AlertDialog.Builder(this).setTitle("Всё под вашим контролем").setMessage("▶ запускает таймер, ■ останавливает. Можно заниматься несколькими задачами одновременно.\n\n«Стоп группы» останавливает только текущую группу. Сон также запускается вручную.\n\nДень начинается в 00:00, неделя — в понедельник. История хранится на телефоне. Таймеры продолжают считать по сохранённому времени, даже если приложение закрыто. После перезагрузки работающие таймеры тоже продолжаются.\n\nДля правки нажмите на отрезок ленты или запись в истории. Перенесённое время попадёт в выбранную задачу, остальные пересекающиеся занятия не изменятся.\n\nНа vivo разрешите уведомления и фоновую работу Dayline в настройках батареи, чтобы управление таймерами было доступно в шторке.\n\nExcel — готовый снимок выбранной недели. Для сохранения всей истории используйте резервную копию. В копии работающие сеансы завершаются на момент сохранения; текущие таймеры телефона продолжаются.\n\nDayline 1.0.0 · без рекламы и доступа к интернету").setPositiveButton("Понятно",null).show();
+        if(w==4)new AlertDialog.Builder(this).setTitle("Всё под вашим контролем").setMessage("▶ запускает таймер, ■ останавливает. Можно заниматься несколькими задачами одновременно.\n\n«Стоп группы» останавливает только текущую группу. Сон также запускается вручную.\n\nДень начинается в 00:00, неделя — в понедельник. История хранится на телефоне. Таймеры продолжают считать по сохранённому времени, даже если приложение закрыто. После перезагрузки работающие таймеры тоже продолжаются.\n\nДля правки нажмите на отрезок ленты или запись в истории. Перенесённое время попадёт в выбранную задачу, остальные пересекающиеся занятия не изменятся.\n\nНа vivo разрешите уведомления и фоновую работу Dayline в настройках батареи, чтобы управление таймерами было доступно в шторке.\n\nExcel — готовый снимок выбранной недели. Для сохранения всей истории используйте резервную копию. В копии работающие сеансы завершаются на момент сохранения; текущие таймеры телефона продолжаются.\n\nDayline 1.1.0 · без рекламы и доступа к интернету").setPositiveButton("Понятно",null).show();
     }).show();}
     void exportDialog(){
         LinearLayout form=column(this);pad(form,20,8);LocalDate week=TimeMath.monday(mode==0?LocalDate.now():selectedDate);
         add(form,text(this,"Неделя с "+week.format(DateTimeFormatter.ofPattern("d MMMM",TimeMath.RU)),17,INK,true),0);
         add(form,label(this,"Что включить в подробный отчёт"),16);Spinner scope=new Spinner(this);List<String> labels=new ArrayList<>();labels.add("Все группы");for(Group g:data.groups)labels.add(g.name);scope.setAdapter(new ArrayAdapter<>(this,android.R.layout.simple_spinner_dropdown_item,labels));add(form,scope,6);
         if(mode==1&&analysisGroup!=0)for(int i=0;i<data.groups.size();i++)if(data.groups.get(i).id==analysisGroup)scope.setSelection(i+1);
-        add(form,label(this,"При выборе группы остальные занятия в ленте будут объединены в «Другое». Их названия и описания в файл не попадут."),16);
-        new AlertDialog.Builder(this).setTitle("Готовый отчёт Excel").setView(form).setNegativeButton("Отмена",null).setPositiveButton("Сохранить",(d,w)->{exportWeek=week;exportGroup=scope.getSelectedItemPosition()==0?0:data.groups.get(scope.getSelectedItemPosition()-1).id;createDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","dayline-"+week+(exportGroup==0?"":"-group")+".xlsx",100);}).show();
+        CheckBox selectedOnly=new CheckBox(this);selectedOnly.setText("Только выбранные задачи: "+selectedTasks.size());selectedOnly.setTextColor(INK);selectedOnly.setChecked(mode==1&&selectionActive);
+        if(mode==1&&selectionActive){add(form,selectedOnly,12);scope.setEnabled(false);selectedOnly.setOnCheckedChangeListener((b,checked)->scope.setEnabled(!checked));}
+        add(form,label(this,"При выборе группы или задач остальные занятия в ленте будут объединены в «Другое». Их названия и описания в файл не попадут."),16);
+        new AlertDialog.Builder(this).setTitle("Готовый отчёт Excel").setView(form).setNegativeButton("Отмена",null).setPositiveButton("Сохранить",(d,w)->{exportWeek=week;exportTasks=selectedOnly.isChecked()?new LinkedHashSet<>(selectedTasks):null;exportGroup=scope.getSelectedItemPosition()==0?0:data.groups.get(scope.getSelectedItemPosition()-1).id;createDocument("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","dayline-"+week+(exportGroup==0?"":"-group")+".xlsx",100);}).show();
     }
     private void createDocument(String mime,String name,int code){Intent i=new Intent(Intent.ACTION_CREATE_DOCUMENT).addCategory(Intent.CATEGORY_OPENABLE).setType(mime).putExtra(Intent.EXTRA_TITLE,name);startActivityForResult(i,code);}
     @Override protected void onActivityResult(int request,int result,Intent intent){super.onActivityResult(request,result,intent);if(result!=RESULT_OK||intent==null||intent.getData()==null)return;Uri uri=intent.getData();
@@ -191,9 +173,9 @@ public final class MainActivity extends Activity {
             }catch(Exception e){fileError(e);}});return;
         }
         if(request==100||request==101){
-            long now=System.currentTimeMillis();Snapshot captured=store.snapshot();LocalDate week=exportWeek;long group=exportGroup;toast("Сохраняю файл…");
+            long now=System.currentTimeMillis();Snapshot captured=store.snapshot();LocalDate week=exportWeek;long group=exportGroup;Set<Long> tasks=exportTasks==null?null:new LinkedHashSet<>(exportTasks);toast("Сохраняю файл…");
             files.execute(()->{try(OutputStream out=getContentResolver().openOutputStream(uri,"wt")){
-                if(out==null)throw new IOException("Не удалось открыть место сохранения");if(request==100)ExcelReport.write(out,captured,week,zone,group,now);else out.write(store.backup(now).getBytes(StandardCharsets.UTF_8));
+                if(out==null)throw new IOException("Не удалось открыть место сохранения");if(request==100)ExcelReport.write(out,captured,week,zone,group,now,tasks);else out.write(store.backup(now).getBytes(StandardCharsets.UTF_8));
                 runOnUiThread(()->{if(isFinishing()||isDestroyed())return;new AlertDialog.Builder(this).setTitle("Файл сохранён").setMessage(request==100?"Готовые сводки, подробные записи и лента недели находятся в Excel-файле.":"Резервная копия содержит группы, задачи и всю историю.").setNegativeButton("Готово",null).setPositiveButton("Открыть",(d,w)->{try{startActivity(new Intent(Intent.ACTION_VIEW).setDataAndType(uri,request==100?"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet":"application/json").addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION));}catch(ActivityNotFoundException e){toast("Файл сохранён. Его можно открыть через приложение «Файлы».");}}).show();});
             }catch(Exception e){fileError(e);}});
         }

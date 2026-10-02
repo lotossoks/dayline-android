@@ -115,6 +115,16 @@ public final class Store extends SQLiteOpenHelper {
         Snapshot s=snapshot();Session x=s.session(id);if(x==null||x.running())throw new IllegalArgumentException("Сначала остановите таймер");
         getWritableDatabase().delete("sessions","id=?",new String[]{""+id});undoSessions=s.sessions;
     }
+    public synchronized int fillGaps(long taskId,Set<Long> coverageTasks,long from,long to,long now,long maxDuration) {
+        if(from<=0||to<=from||from>=now)throw new IllegalArgumentException("Выберите прошедший день или неделю");
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            Snapshot before=snapshot();if(before.task(taskId)==null)throw new IllegalArgumentException("Задача не найдена");
+            List<long[]> gaps=app.dayline.core.AnalysisMath.fillable(before,taskId,coverageTasks,from,to,now,maxDuration);
+            for(long[] gap:gaps){checkOverlap(before,taskId,gap[0],gap[1],0);insertSession(db,0,taskId,gap[0],gap[1]);}
+            db.setTransactionSuccessful();if(!gaps.isEmpty())undoSessions=before.sessions;return gaps.size();
+        } finally { db.endTransaction(); }
+    }
     public synchronized boolean canUndo() { return undoSessions!=null; }
     public synchronized void undo() {
         if(undoSessions==null)return;SQLiteDatabase db=getWritableDatabase();db.beginTransaction();

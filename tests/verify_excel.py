@@ -23,7 +23,7 @@ def cells(xml):
         check(cell.find('s:f', NS) is None, 'user text must not become a formula')
     return result
 
-for name, summed, occupied in [('work.xlsx', 6, 5), ('all.xlsx', 10, 7), ('empty.xlsx', 0, 0)]:
+for name, summed, occupied in [('work.xlsx', 6, 5), ('all.xlsx', 10, 7), ('empty.xlsx', 0, 0), ('selected.xlsx', 4, 4)]:
     path = Path(sys.argv[1]) / name
     with ZipFile(path) as archive:
         check(archive.testzip() is None, 'ZIP integrity')

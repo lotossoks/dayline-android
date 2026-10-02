@@ -58,11 +58,20 @@ public final class ExcelReport {
             return b.append("<pageMargins left=\"0.3\" right=\"0.3\" top=\"0.5\" bottom=\"0.5\" header=\"0.2\" footer=\"0.2\"/><pageSetup orientation=\"landscape\" paperSize=\"9\" fitToWidth=\"1\" fitToHeight=\"0\"/></worksheet>").toString();
         }
     }
+    private static boolean included(Task task,long group,Set<Long> ids){return ids!=null?ids.contains(task.id):group==0||task.groupId==group;}
+    private static boolean includedGroup(Snapshot data,long group,long selectedGroup,Set<Long> ids){
+        if(ids==null)return selectedGroup==0||group==selectedGroup;
+        for(Task task:data.tasks)if(task.groupId==group&&ids.contains(task.id))return true;return false;
+    }
     public static void write(OutputStream stream,Snapshot data,LocalDate anyDay,ZoneId zone,long groupId,long capturedAt)throws IOException{
+        write(stream,data,anyDay,zone,groupId,capturedAt,null);
+    }
+    public static void write(OutputStream stream,Snapshot data,LocalDate anyDay,ZoneId zone,long groupId,long capturedAt,Set<Long> taskIds)throws IOException{
+        boolean filtered=groupId!=0||taskIds!=null;
         LocalDate week=TimeMath.monday(anyDay);long from=TimeMath.start(week,zone),to=TimeMath.start(week.plusDays(7),zone);
-        List<Session> rows=data.forGroup(groupId);rows.removeIf(s->TimeMath.duration(s,from,to,capturedAt)==0);
+        List<Session> rows=AnalysisMath.select(data,taskIds,groupId);rows.removeIf(s->TimeMath.duration(s,from,to,capturedAt)==0);
         rows.sort(Comparator.comparingLong(s->s.start));
-        Group selected=data.group(groupId);String scope=selected==null?"Все группы":selected.name;
+        Group selected=data.group(groupId);String scope=taskIds!=null?"Выбранные задачи: "+taskIds.size():selected==null?"Все группы":selected.name;
         String period=week.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"))+" — "+week.plusDays(6).format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
         String subtitle=period+" · "+scope+" · "+zone;
         long sum=TimeMath.sum(rows,from,to,capturedAt),union=TimeMath.union(rows,from,to,capturedAt);
@@ -73,12 +82,12 @@ public final class ExcelReport {
         overview.headings("Показатель","Время, ч:мм:сс","Часы (числом)","Как читать");
         overview.row(text("Сумма времени задач"),time(sum),hours(sum),text("Параллельные задачи учитываются каждая целиком."));
         overview.row(text("Фактическая занятость"),time(union),hours(union),text("Пересечения объединены. Одна минута учитывается один раз."));
-        overview.row(text(groupId==0?"Не учтено":"Без записей выбранной группы"),time(gap),hours(gap),text("Только прошедшая часть недели. Будущее время исключено."));
+        overview.row(text(!filtered?"Не учтено":"Без записей выбранных задач"),time(gap),hours(gap),text("Только прошедшая часть недели. Будущее время исключено."));
         overview.row(text("Время параллельного учёта сверх занятости"),time(sum-union),hours(sum-union),text("Разница между суммой часов задач и фактической занятостью."));
         overview.row(text("Записей за неделю"),number(rows.size()));
         overview.row(text("Сформировано"),date(capturedAt,zone));
         overview.row();overview.headings("Группа","Время задач","Занятость без пересечений","Доля суммы задач");
-        for(Group g:data.groups)if(groupId==0||groupId==g.id){
+        for(Group g:data.groups)if(includedGroup(data,g.id,groupId,taskIds)){
             List<Session> gs=new ArrayList<>();for(Session s:rows)if(data.task(s.taskId).groupId==g.id)gs.add(s);
             long n=TimeMath.sum(gs,from,to,capturedAt);overview.row(text(g.name),time(n),time(TimeMath.union(gs,from,to,capturedAt)),new Cell(sum==0?0:n/(double)sum,6));
         }
@@ -87,7 +96,7 @@ public final class ExcelReport {
         overview.row(text("Суммы занятости отдельных групп могут пересекаться между собой."));
 
         Sheet days=new Sheet("По дням",18,19,23,25,24,18,18);
-        days.title("Неделя по дням",subtitle);days.headings("Дата","День недели","Время задач","Фактическая занятость",groupId==0?"Не учтено":"Вне выбранной группы","Часы задач","Часы занятости");
+        days.title("Неделя по дням",subtitle);days.headings("Дата","День недели","Время задач","Фактическая занятость",!filtered?"Не учтено":"Вне выбранных задач","Часы задач","Часы занятости");
         for(int i=0;i<7;i++){
             LocalDate d=week.plusDays(i);long a=TimeMath.start(d,zone),b=TimeMath.start(d.plusDays(1),zone),n=TimeMath.sum(rows,a,b,capturedAt),u=TimeMath.union(rows,a,b,capturedAt);
             days.row(new Cell(ChronoUnit.DAYS.between(LocalDate.of(1899,12,30),d),7),text(d.format(DateTimeFormatter.ofPattern("EEEE",TimeMath.RU))),time(n),time(u),time(Math.max(0,Math.min(b,capturedAt)-a)-u),hours(n),hours(u));
@@ -96,7 +105,7 @@ public final class ExcelReport {
 
         Sheet groups=new Sheet("По группам",30,24,25,18,18,18);
         groups.title("Распределение по группам",subtitle);groups.headings("Группа","Время задач","Фактическая занятость","Часы задач","Доля задач","Записей");
-        for(Group g:data.groups)if(groupId==0||g.id==groupId){
+        for(Group g:data.groups)if(includedGroup(data,g.id,groupId,taskIds)){
             List<Session> gs=new ArrayList<>();for(Session s:rows)if(data.task(s.taskId).groupId==g.id)gs.add(s);
             long n=TimeMath.sum(gs,from,to,capturedAt);groups.row(text(g.name),time(n),time(TimeMath.union(gs,from,to,capturedAt)),hours(n),new Cell(sum==0?0:n/(double)sum,6),number(gs.size()));
         }
@@ -104,7 +113,7 @@ public final class ExcelReport {
         Sheet tasks=new Sheet("По задачам",23,38,23,18,18,18,22,65);
         tasks.title("На что ушло время",subtitle);tasks.headings("Группа","Задача","Время","Часы","Доля","Записей","Статус задачи","Описание");
         List<Task> sorted=new ArrayList<>(data.tasks);sorted.sort((a,b)->Long.compare(TimeMath.sum(data.forTask(b.id),from,to,capturedAt),TimeMath.sum(data.forTask(a.id),from,to,capturedAt)));
-        for(Task t:sorted)if(groupId==0||t.groupId==groupId){
+        for(Task t:sorted)if(included(t,groupId,taskIds)){
             List<Session> ts=new ArrayList<>();for(Session s:rows)if(s.taskId==t.id)ts.add(s);
             long n=TimeMath.sum(ts,from,to,capturedAt);if(n==0)continue;
             tasks.row(text(data.group(t.groupId).name),text(t.name),time(n),hours(n),new Cell(sum==0?0:n/(double)sum,6),number(ts.size()),text(t.archived?"Завершена":"Открыта"),text(t.note));
@@ -122,11 +131,11 @@ public final class ExcelReport {
         Sheet timeline=new Sheet("Лента недели",timelineWidths);timeline.freezeLabels=true;
         timeline.title("Лента недели · 24 часа",subtitle+" · в часовых ячейках — учтённые минуты; пустое будущее время не заполняется");
         String[] labels=new String[27];labels[0]="Дата";labels[1]="Занятие";for(int h=0;h<24;h++)labels[h+2]=String.format(Locale.ROOT,"%02d:00",h);labels[26]="Всего";timeline.headings(labels);
-        List<Session> others=new ArrayList<>();if(groupId!=0)for(Session s:data.sessions)if(data.task(s.taskId).groupId!=groupId)others.add(s);
+        List<Session> others=new ArrayList<>();if(filtered)for(Session s:data.sessions)if(!included(data.task(s.taskId),groupId,taskIds))others.add(s);
         for(int d=0;d<7;d++){
             LocalDate day=week.plusDays(d);long dayStart=TimeMath.start(day,zone),dayEnd=TimeMath.start(day.plusDays(1),zone);
-            for(Task t:data.tasks)if(groupId==0||t.groupId==groupId){List<Session> ts=data.forTask(t.id);if(TimeMath.sum(ts,dayStart,dayEnd,capturedAt)>0)timelineRow(timeline,day,groupId==0?data.group(t.groupId).name+" / "+t.name:t.name,ts,zone,capturedAt,9);}
-            if(groupId!=0&&TimeMath.union(others,dayStart,dayEnd,capturedAt)>0)timelineRow(timeline,day,"Другое",others,zone,capturedAt,10);
+            for(Task t:data.tasks)if(included(t,groupId,taskIds)){List<Session> ts=data.forTask(t.id);if(TimeMath.sum(ts,dayStart,dayEnd,capturedAt)>0)timelineRow(timeline,day,groupId==0?data.group(t.groupId).name+" / "+t.name:t.name,ts,zone,capturedAt,9);}
+            if(filtered&&TimeMath.union(others,dayStart,dayEnd,capturedAt)>0)timelineRow(timeline,day,"Другое",others,zone,capturedAt,10);
             List<Session> gaps=new ArrayList<>();for(long[] gapRange:TimeMath.gaps(data.sessions,dayStart,dayEnd,capturedAt))gaps.add(new Session(0,0,gapRange[0],gapRange[1]));
             if(!gaps.isEmpty())timelineRow(timeline,day,"Не учтено",gaps,zone,capturedAt,11);
             if(dayStart>capturedAt)timelineRow(timeline,day,"Впереди",Collections.emptyList(),zone,capturedAt,11);

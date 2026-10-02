@@ -17,6 +17,7 @@ public final class DaylineInstrumentation extends Instrumentation {
     @Override public void onStart(){
         Bundle result=new Bundle();
         try{
+            if("true".equals(options.getString("analysis"))){analysisSmoke();result.putString("stream","PASS: "+checks+" analysis UI assertions.\n");finish(Activity.RESULT_OK,result);return;}
             if("true".equals(options.getString("timeline"))){timelineSmoke();result.putString("stream","PASS: "+checks+" timeline rendering assertions.\n");finish(Activity.RESULT_OK,result);return;}
             if("true".equals(options.getString("seed"))){seed();result.putString("stream","Demo data installed in debug app only.\n");finish(Activity.RESULT_OK,result);return;}
             if("true".equals(options.getString("ui"))){uiSmoke();result.putString("stream","PASS: "+checks+" UI assertions; screenshots saved.\n");finish(Activity.RESULT_OK,result);return;}
@@ -48,10 +49,24 @@ public final class DaylineInstrumentation extends Instrumentation {
             store.restore(backup,now+1000);check(store.snapshot().runningCount(0)==0,"restore snapshot is stopped");check(store.snapshot().task(a).note.equals("Описание"),"notes retained");
             int rows=store.snapshot().sessions.size();try{store.restore("{\"format\":\"other\"}",now);throw new AssertionError("bad backup");}catch(IllegalArgumentException expected){}check(store.snapshot().sessions.size()==rows,"invalid restore preserves data");
             store.saveTask(a,life,"Переименована","Новое описание");check(store.snapshot().task(a).groupId==life,"task movement");
-            store.close();c.deleteDatabase("dayline-test.db");
+            store.close();c.deleteDatabase("dayline-test.db");gapTests(c,now);
             Intent launch=new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);Activity activity=startActivitySync(launch);waitForIdleSync();check(activity!=null,"activity launched");
             result.putString("stream","PASS: "+checks+" Android assertions; SQLite, lifecycle and main activity.\n");finish(Activity.RESULT_OK,result);
         }catch(Throwable e){result.putString("stream","FAIL: "+e+"\n"+android.util.Log.getStackTraceString(e));finish(Activity.RESULT_CANCELED,result);}
+    }
+    private void gapTests(Context c,long now){
+        c.deleteDatabase("dayline-gaps-test.db");Store store=new Store(c,"dayline-gaps-test.db");long start=now-4*TimeMath.HOUR;
+        long first=store.saveTask(0,1,"A",""),second=store.saveTask(0,1,"B",""),office=store.saveTask(0,1,"Office",""),target=store.saveTask(0,2,"Filler","");
+        store.saveSession(0,first,start,start+60000,now);store.saveSession(0,second,start+120000,start+180000,now);store.saveSession(0,office,start,start+300000,now);
+        int before=store.snapshot().sessions.size();Set<Long> coverage=new HashSet<>(Arrays.asList(first,second));
+        check(store.fillGaps(target,null,start,start+300000,now,120000)==0,"global gap fill respects office");
+        check(store.fillGaps(target,coverage,start,start+300000,now,120000)==2,"batch fills one- and two-minute filtered gaps");
+        check(store.snapshot().sessions.size()==before+2,"all gap rows saved");check(TimeMath.sum(store.snapshot().forTask(target),start,now,now)==180000,"batch duration");
+        check(store.fillGaps(target,coverage,start,start+300000,now,120000)==0,"repeat fill is idempotent");check(store.canUndo(),"no-op retains undo");store.undo();check(store.snapshot().sessions.size()==before,"single undo reverts whole batch");
+        rejects(()->store.fillGaps(999,coverage,start,start+300000,now,0),"invalid target rejected atomically");check(store.snapshot().sessions.size()==before,"failed fill preserves all records");
+        store.toggle(target,now-1000);store.fillGaps(target,coverage,now-120000,now+TimeMath.HOUR,now,0);check(store.snapshot().running(target)!=null,"filler leaves running timer active");
+        for(Session row:store.snapshot().forTask(target))if(!row.running())check(row.end<=now-1000,"filled pieces do not overlap active target or future");
+        store.close();c.deleteDatabase("dayline-gaps-test.db");
     }
     private android.view.accessibility.AccessibilityNodeInfo findNode(java.util.function.Predicate<android.view.accessibility.AccessibilityNodeInfo> predicate){
         for(int attempt=0;attempt<30;attempt++){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();android.view.accessibility.AccessibilityNodeInfo found=walk(root,predicate);if(found!=null)return found;SystemClock.sleep(150);}
@@ -78,6 +93,35 @@ public final class DaylineInstrumentation extends Instrumentation {
         click("▤  Анализ");screenshot("analysis-empty");click("День");screenshot("analysis-day");
         runOnMainSync(()->{MainActivity m=(MainActivity)activity;new Editors(m).session(null,0);});SystemClock.sleep(300);screenshot("manual-editor");click("ОТМЕНА");
         click("◷  Трекинг");screenshot("tracking");
+    }
+    private android.view.View findView(android.view.View root,java.util.function.Predicate<android.view.View> match){
+        if(match.test(root))return root;if(root instanceof android.view.ViewGroup){android.view.ViewGroup g=(android.view.ViewGroup)root;for(int i=0;i<g.getChildCount();i++){android.view.View result=findView(g.getChildAt(i),match);if(result!=null)return result;}}return null;
+    }
+    private void reveal(Activity activity,String description){
+        runOnMainSync(()->{android.view.View v=findView(activity.getWindow().getDecorView(),x->description.contentEquals(x.getContentDescription()==null?"":x.getContentDescription()));if(v==null)throw new AssertionError("View missing: "+description);v.requestRectangleOnScreen(new android.graphics.Rect(0,0,v.getWidth(),v.getHeight()),true);});SystemClock.sleep(350);
+    }
+    private void top(Activity activity){runOnMainSync(()->{android.view.View v=findView(activity.getWindow().getDecorView(),x->x instanceof android.widget.ScrollView);if(v!=null)((android.widget.ScrollView)v).scrollTo(0,0);});SystemClock.sleep(300);}
+    private void analysisSmoke()throws Exception{
+        Context c=getTargetContext();Store store=Store.get(c);check(store.snapshot().tasks.size()==1,"analysis UI requires fresh test emulator");
+        long study=store.saveGroup(0,"Учёба",0xff467f9d),first=store.saveTask(0,1,"Задача 1",""),second=store.saveTask(0,1,"Задача 2",""),office=store.saveTask(0,1,"В офисе",""),learn=store.saveTask(0,study,"Матанализ",""),life=store.saveTask(0,2,"Прогулка","");
+        long now=System.currentTimeMillis();ZoneId zone=ZoneId.systemDefault();LocalDate today=LocalDate.now();
+        for(int i=1;i<=14;i++){long day=TimeMath.start(today.minusDays(i),zone);for(long[] row:new long[][]{{1,day,day+7*TimeMath.HOUR},{first,day+9*TimeMath.HOUR,day+10*TimeMath.HOUR},{second,day+9*TimeMath.HOUR+30*60000,day+11*TimeMath.HOUR},{first,day+11*TimeMath.HOUR+60000,day+12*TimeMath.HOUR},{office,day+8*TimeMath.HOUR,day+18*TimeMath.HOUR},{learn,day+15*TimeMath.HOUR,day+17*TimeMath.HOUR},{life,day+20*TimeMath.HOUR,day+21*TimeMath.HOUR}})store.saveSession(0,row[0],row[1],row[2],now);}
+        MainActivity activity=(MainActivity)startActivitySync(new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));waitForIdleSync();
+        runOnMainSync(()->{activity.mode=1;activity.weekly=false;activity.selectedDate=today.minusDays(1);activity.render(false);});SystemClock.sleep(400);
+        reveal(activity,"Задача в анализе: Задача 1");android.view.accessibility.AccessibilityNodeInfo node=findNode(x->"Задача в анализе: Задача 1".contentEquals(x.getContentDescription()==null?"":x.getContentDescription()));
+        check(node!=null&&node.performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_LONG_CLICK),"long press selects task");SystemClock.sleep(350);check(activity.selectionActive&&activity.selectedTasks.contains(first),"selection enabled");
+        reveal(activity,"Задача в анализе: Задача 2");click("Задача в анализе: Задача 2");check(activity.selectedTasks.size()==2&&!activity.selectedTasks.contains(office),"tap adds second task, office excluded");
+        check(activity.selectionSummary.getText().toString().contains("3 ч 29 м")&&activity.selectionSummary.getText().toString().contains("2 ч 59 м"),"live selected sum and union");screenshot("selection");
+        top(activity);click("Среднее");check(activity.averageMode,"average mode");check(activity.selectionSummary.getText().toString().contains("3 ч 29 м"),"averages use same task selection");screenshot("average-selected");
+        click("Закрыть выбор задач");check(!activity.selectionActive&&activity.selectedTasks.isEmpty(),"cross clears selection");
+        runOnMainSync(()->{android.view.View chart=findView(activity.getWindow().getDecorView(),v->v instanceof AverageChartView);check(chart!=null,"average chart attached");chart.requestRectangleOnScreen(new android.graphics.Rect(0,0,chart.getWidth(),chart.getHeight()),true);});SystemClock.sleep(350);screenshot("average-lanes");
+        top(activity);runOnMainSync(()->{android.widget.Spinner spinner=(android.widget.Spinner)findView(activity.getWindow().getDecorView(),v->"День недели для среднего".contentEquals(v.getContentDescription()==null?"":v.getContentDescription()));spinner.setSelection(1);});SystemClock.sleep(400);check(activity.averageWeekday==1,"weekday average selected");
+        runOnMainSync(()->{activity.averageMode=false;activity.selectedTasks.add(first);activity.selectedTasks.add(second);activity.selectionActive=true;activity.saveSelection();activity.render(false);new GapFiller(activity).show(TimeMath.start(today.minusDays(1),zone),TimeMath.start(today,zone));});SystemClock.sleep(400);
+        click("Искать пробелы только в выбранных задачах");screenshot("gap-fill");
+        runOnMainSync(()->{android.view.View root=activity.getWindow().getDecorView();});
+        android.view.accessibility.AccessibilityNodeInfo preview=findNode(x->x.getText()!=null&&x.getText().toString().startsWith("Промежутков: 1"));check(preview!=null,"one short filtered gap preview");
+        int before=store.snapshot().sessions.size();click("ЗАПОЛНИТЬ");check(store.snapshot().sessions.size()==before+1,"fill applies all displayed gaps");check(store.canUndo(),"fill can undo");runOnMainSync(()->{store.undo();activity.changed(true);});check(store.snapshot().sessions.size()==before,"undo restores original history");
+        check(activity.getPreferences(0).getStringSet("selectedTasks",Collections.emptySet()).size()==2,"selected tasks persisted");
     }
     private void timelineSmoke()throws Exception{
         Context c=getTargetContext();Activity activity=startActivitySync(new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

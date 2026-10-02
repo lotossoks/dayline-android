@@ -58,6 +58,12 @@ public final class CoreTest {
             }
         }
         Snapshot empty=new Snapshot();empty.groups.add(new Group(1,"Работа",0xff216b58));try(OutputStream stream=new FileOutputStream(out.resolve("empty.xlsx").toFile())){ExcelReport.write(stream,empty,LocalDate.of(2026,10,5),Z,0,captured);}
+        try(OutputStream stream=Files.newOutputStream(out.resolve("selected.xlsx"))){ExcelReport.write(stream,data,LocalDate.of(2026,9,23),Z,0,captured,Collections.singleton(1L));}
+        try(ZipFile zip=new ZipFile(out.resolve("selected.xlsx").toFile())){
+            StringBuilder content=new StringBuilder();Enumeration<? extends ZipEntry> entries=zip.entries();while(entries.hasMoreElements())content.append(new String(zip.getInputStream(entries.nextElement()).readAllBytes(),java.nio.charset.StandardCharsets.UTF_8));
+            yes(!content.toString().contains("SECRET")&&!content.toString().contains("TEST")&&!content.toString().contains("Завершённая задача"),"selected export omits unselected names and descriptions");
+            yes(content.toString().contains("Другое")&&content.toString().contains("TGPA-123"),"selected export retains chosen detail and anonymous other lane");
+        }
         System.out.println("PASS: "+checks+" assertions; reports in "+out.toAbsolutePath());
     }
 }
