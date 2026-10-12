@@ -15,17 +15,33 @@ final class Editors {
     private final MainActivity a;
     Editors(MainActivity activity){a=activity;}
     private LinearLayout form(){LinearLayout f=column(a);pad(f,20,12);return f;}
-    private void saveDialog(String title,LinearLayout form,String action,Runnable save){
+    private AlertDialog saveDialog(String title,LinearLayout form,String action,Runnable save){
         TextView error=text(a,"",14,RED,false);error.setVisibility(View.GONE);add(form,error,14);ScrollView sc=new ScrollView(a);sc.addView(form);
         AlertDialog dialog=new AlertDialog.Builder(a).setTitle(title).setView(sc).setNegativeButton("Отмена",null).setPositiveButton(action,null).create();
-        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{save.run();dialog.dismiss();}catch(IllegalArgumentException|android.database.SQLException e){error.setText(e.getMessage());error.setVisibility(View.VISIBLE);sc.post(()->sc.fullScroll(View.FOCUS_DOWN));}}));dialog.show();
+        dialog.setOnShowListener(d->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v->{try{save.run();dialog.dismiss();}catch(IllegalArgumentException|android.database.SQLException e){error.setText(e.getMessage());error.setVisibility(View.VISIBLE);sc.post(()->sc.fullScroll(View.FOCUS_DOWN));}}));dialog.show();return dialog;
     }
     void group(Group current){
         LinearLayout f=form();EditText name=input(a,"Название группы",current==null?"":current.name,false);add(f,name,0);add(f,label(a,"Цвет группы"),18);
         int[] colors={GREEN,0xffbd713f,0xff7270b1,0xff467f9d,0xffad6275,0xff918333};int[] selected={current==null?colors[a.data.groups.size()%colors.length]:current.color};
         LinearLayout choices=row(a);List<TextView> items=new ArrayList<>();
         for(int color:colors){TextView swatch=button(a,selected[0]==color?"✓":"",true,()->{});swatch.setTextSize(20);swatch.setBackground(bg(color,0,12,a));swatch.setContentDescription("Выбрать цвет "+Integer.toHexString(color));LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(0,dp(a,48),1);p.rightMargin=dp(a,5);choices.addView(swatch,p);items.add(swatch);swatch.setOnClickListener(v->{selected[0]=color;for(int i=0;i<items.size();i++)items.get(i).setText(colors[i]==color?"✓":"");});}
-        add(f,choices,10);saveDialog(current==null?"Новая группа":"Изменить группу",f,"Сохранить",()->{long id=a.store.saveGroup(current==null?0:current.id,name.getText().toString(),selected[0]);a.groupId=id;if(a.mode==1)a.analysisGroup=id;a.changed(false);});
+        add(f,choices,10);AlertDialog editor=saveDialog(current==null?"Новая группа":"Изменить группу",f,"Сохранить",()->{long id=a.store.saveGroup(current==null?0:current.id,name.getText().toString(),selected[0]);a.groupId=id;if(a.mode==1)a.analysisGroup=id;a.changed(false);});
+        if(current!=null){TextView remove=button(a,"Удалить группу",false,()->{editor.dismiss();deleteGroup(current);});remove.setTextColor(RED);add(f,remove,20);}
+    }
+    private void deleteGroup(Group group){
+        Snapshot data=a.store.snapshot();
+        if(data.groups.size()==1){new AlertDialog.Builder(a).setTitle("Это последняя группа").setMessage("Нужна хотя бы одна группа для задач. Сначала создайте другую, затем удалите эту.").setNegativeButton("Назад",null).setPositiveButton("Создать группу",(d,w)->group(null)).show();return;}
+        List<Group> targets=new ArrayList<>();for(Group g:data.groups)if(g.id!=group.id)targets.add(g);
+        int tasks=0,archived=0,running=0;for(Task t:data.tasks)if(t.groupId==group.id){tasks++;if(t.archived)archived++;if(data.running(t.id)!=null)running++;}
+        if(tasks==0){a.safe(()->finishDeleteGroup(group,targets.get(0).id));return;}
+        LinearLayout f=form();add(f,text(a,"Все задачи и история сохранятся",18,INK,true),0);
+        add(f,label(a,"Задач: "+tasks+" · завершённых: "+archived+"\nРаботающих таймеров: "+running+" — они продолжат отсчёт."),12);
+        add(f,label(a,"Перенести в группу"),18);Spinner target=new Spinner(a);target.setAdapter(new ArrayAdapter<>(a,android.R.layout.simple_spinner_dropdown_item,targets));add(f,target,8);
+        add(f,label(a,"Вся история этих задач будет учитываться в выбранной группе."),14);
+        saveDialog("Удалить «"+group.name+"»?",f,"Перенести и удалить",()->finishDeleteGroup(group,((Group)target.getSelectedItem()).id));
+    }
+    private void finishDeleteGroup(Group group,long target){
+        a.store.deleteGroup(group.id,target);if(a.groupId==group.id)a.groupId=target;if(a.analysisGroup==group.id)a.analysisGroup=target;a.getPreferences(0).edit().putLong("group",a.groupId).apply();a.changed(false);a.toast("Группа удалена. Задачи и история сохранены.");
     }
     void task(Task current,long groupId){
         LinearLayout f=form();EditText name=input(a,"Например, Математический анализ",current==null?"":current.name,false);add(f,label(a,"Короткое название"),0);add(f,name,6);

@@ -49,7 +49,7 @@ public final class DaylineInstrumentation extends Instrumentation {
             store.restore(backup,now+1000);check(store.snapshot().runningCount(0)==0,"restore snapshot is stopped");check(store.snapshot().task(a).note.equals("Описание"),"notes retained");
             int rows=store.snapshot().sessions.size();try{store.restore("{\"format\":\"other\"}",now);throw new AssertionError("bad backup");}catch(IllegalArgumentException expected){}check(store.snapshot().sessions.size()==rows,"invalid restore preserves data");
             store.saveTask(a,life,"Переименована","Новое описание");check(store.snapshot().task(a).groupId==life,"task movement");
-            store.close();c.deleteDatabase("dayline-test.db");gapTests(c,now);
+            store.close();c.deleteDatabase("dayline-test.db");gapTests(c,now);groupTests(c,now);
             Intent launch=new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);Activity activity=startActivitySync(launch);waitForIdleSync();check(activity!=null,"activity launched");
             result.putString("stream","PASS: "+checks+" Android assertions; SQLite, lifecycle and main activity.\n");finish(Activity.RESULT_OK,result);
         }catch(Throwable e){result.putString("stream","FAIL: "+e+"\n"+android.util.Log.getStackTraceString(e));finish(Activity.RESULT_CANCELED,result);}
@@ -67,6 +67,18 @@ public final class DaylineInstrumentation extends Instrumentation {
         store.toggle(target,now-1000);store.fillGaps(target,coverage,now-120000,now+TimeMath.HOUR,now,0);check(store.snapshot().running(target)!=null,"filler leaves running timer active");
         for(Session row:store.snapshot().forTask(target))if(!row.running())check(row.end<=now-1000,"filled pieces do not overlap active target or future");
         store.close();c.deleteDatabase("dayline-gaps-test.db");
+    }
+    private void groupTests(Context c,long now){
+        c.deleteDatabase("dayline-groups-test.db");Store store=new Store(c,"dayline-groups-test.db");
+        long task=store.saveTask(0,1,"Задача","Сохранить описание"),closed=store.saveTask(0,1,"Завершённая","История"),other=store.saveTask(0,2,"Другая","");
+        store.saveSession(0,task,now-4*TimeMath.HOUR,now-3*TimeMath.HOUR,now);store.saveSession(0,closed,now-2*TimeMath.HOUR,now-TimeMath.HOUR,now);store.archive(closed,true,now);store.toggle(task,now-60000);store.toggle(other,now-60000);
+        Snapshot before=store.snapshot();rejects(()->store.deleteGroup(1,1),"cannot transfer into removed group");rejects(()->store.deleteGroup(1,999),"missing target rejected");check(store.snapshot().groups.size()==3&&store.snapshot().task(task).groupId==1,"invalid deletion is atomic");
+        store.deleteGroup(1,2);Snapshot after=store.snapshot();check(after.group(1)==null&&after.groups.size()==2,"source group removed");check(after.task(task).groupId==2&&after.task(closed).groupId==2,"all tasks moved including archive");check(after.task(closed).archived&&after.task(task).note.equals("Сохранить описание"),"task metadata retained");
+        check(after.sessions.size()==before.sessions.size(),"all session rows retained");for(Session row:before.sessions){Session saved=after.session(row.id);check(saved!=null&&saved.taskId==row.taskId&&saved.start==row.start&&saved.end==row.end,"session IDs and timestamps unchanged");}
+        check(after.runningCount(2)==2,"both running timers continue in target");check(!store.canUndo(),"stale session undo invalidated");store.stopGroup(2,now);check(store.snapshot().runningCount(0)==0,"target group stop controls moved timer");
+        long empty=store.saveGroup(0,"Пустая",0);store.deleteGroup(empty,0);check(store.snapshot().group(empty)==null,"empty group needs no target");
+        store.deleteGroup(3,2);rejects(()->store.deleteGroup(2,0),"last group protected");check(store.snapshot().groups.size()==1,"last group rejection preserves data");rejects(()->store.deleteGroup(999,2),"stale group rejected");
+        store.close();c.deleteDatabase("dayline-groups-test.db");
     }
     private android.view.accessibility.AccessibilityNodeInfo findNode(java.util.function.Predicate<android.view.accessibility.AccessibilityNodeInfo> predicate){
         for(int attempt=0;attempt<30;attempt++){android.view.accessibility.AccessibilityNodeInfo root=getUiAutomation().getRootInActiveWindow();android.view.accessibility.AccessibilityNodeInfo found=walk(root,predicate);if(found!=null)return found;SystemClock.sleep(150);}
@@ -122,6 +134,21 @@ public final class DaylineInstrumentation extends Instrumentation {
         android.view.accessibility.AccessibilityNodeInfo preview=findNode(x->x.getText()!=null&&x.getText().toString().startsWith("Промежутков: 1"));check(preview!=null,"one short filtered gap preview");
         int before=store.snapshot().sessions.size();click("ЗАПОЛНИТЬ");check(store.snapshot().sessions.size()==before+1,"fill applies all displayed gaps");check(store.canUndo(),"fill can undo");runOnMainSync(()->{store.undo();activity.changed(true);});check(store.snapshot().sessions.size()==before,"undo restores original history");
         check(activity.getPreferences(0).getStringSet("selectedTasks",Collections.emptySet()).size()==2,"selected tasks persisted");
+        SystemClock.sleep(4000);updateUi(activity,study,learn);
+
+    }
+    private void updateUi(MainActivity activity,long study,long learn)throws Exception{
+        runOnMainSync(()->{activity.averageMode=true;activity.averageWeekday=0;activity.selectionActive=false;activity.selectedTasks.clear();activity.saveSelection();activity.analysisGroup=0;activity.render(false);});SystemClock.sleep(300);
+        reveal(activity,"Кривые KDE");click("Кривые KDE");check(activity.averageKde&&activity.getPreferences(0).getBoolean("averageKde",false),"density mode persists");click("Как читать кривые");click("ПОНЯТНО");
+        runOnMainSync(()->{DensityChartView chart=(DensityChartView)findView(activity.getWindow().getDecorView(),v->v instanceof DensityChartView);check(chart!=null,"density canvas attached");chart.setMinute(16*60);android.view.View card=(android.view.View)chart.getParent();android.widget.ScrollView scroll=(android.widget.ScrollView)findView(activity.getWindow().getDecorView(),v->v instanceof android.widget.ScrollView);android.graphics.Rect rect=new android.graphics.Rect(0,0,card.getWidth(),1);scroll.offsetDescendantRectToMyCoords(card,rect);scroll.scrollTo(0,rect.top);});SystemClock.sleep(300);
+        reveal(activity,"Выделить кривую: Учёба");click("Выделить кривую: Учёба");check(findNode(v->"Выделить кривую: Учёба".contentEquals(v.getContentDescription()==null?"":v.getContentDescription())&&v.isSelected())!=null,"legend highlights selected group");screenshot("kde-legend");click("Выделить кривую: Учёба");screenshot("average-kde");
+        reveal(activity,"Полосы");click("Полосы");runOnMainSync(()->check(findView(activity.getWindow().getDecorView(),v->v instanceof AverageChartView)!=null,"heatmap remains available"));
+        // Delete a real group through the editor, keeping its active and historical sessions.
+        long now=System.currentTimeMillis();activity.store.toggle(learn,now-60000);Snapshot before=activity.store.snapshot();
+        runOnMainSync(()->{activity.mode=0;activity.groupId=study;activity.changed(false);});SystemClock.sleep(300);click("Изменить группу Учёба");click("Удалить группу");screenshot("delete-group");click("ОТМЕНА");check(activity.store.snapshot().group(study)!=null,"cancel preserves group");
+        click("Изменить группу Учёба");click("Удалить группу");click("ПЕРЕНЕСТИ И УДАЛИТЬ");Snapshot after=activity.store.snapshot();check(after.group(study)==null&&after.task(learn).groupId==1,"group deleted and tasks transferred through UI");check(after.running(learn)!=null,"UI deletion leaves timer running");check(after.sessions.size()==before.sessions.size(),"UI deletion preserves all history");
+        for(Session row:before.forTask(learn)){Session saved=after.session(row.id);check(saved!=null&&saved.start==row.start&&saved.end==row.end,"UI transfer retains interval");}
+        runOnMainSync(()->activity.store.stopGroup(1,System.currentTimeMillis()));
     }
     private void timelineSmoke()throws Exception{
         Context c=getTargetContext();Activity activity=startActivitySync(new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));

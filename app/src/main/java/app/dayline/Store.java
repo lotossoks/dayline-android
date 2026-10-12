@@ -40,6 +40,19 @@ public final class Store extends SQLiteOpenHelper {
         if(id==0)return insertGroup(db,n,color);
         ContentValues v=new ContentValues();v.put("name",n);v.put("color",color);db.update("groups",v,"id=?",new String[]{""+id});return id;
     }
+    /** Delete the group only; stable task/session IDs and running timestamps survive the transfer. */
+    public synchronized void deleteGroup(long id,long targetGroupId) {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            Snapshot before=snapshot();
+            if(before.group(id)==null)throw new IllegalArgumentException("Группа уже удалена");
+            if(before.groups.size()==1)throw new IllegalArgumentException("Нужна хотя бы одна группа. Сначала создайте другую.");
+            boolean hasTasks=false;for(Task task:before.tasks)if(task.groupId==id){hasTasks=true;break;}
+            if(hasTasks&&(targetGroupId==id||before.group(targetGroupId)==null))throw new IllegalArgumentException("Выберите другую группу для переноса задач");
+            if(hasTasks){ContentValues values=new ContentValues();values.put("group_id",targetGroupId);db.update("tasks",values,"group_id=?",new String[]{""+id});}
+            db.delete("groups","id=?",new String[]{""+id});db.setTransactionSuccessful();undoSessions=null;
+        }finally { db.endTransaction(); }
+    }
     public synchronized long saveTask(long id,long groupId,String n,String note) {
         n=name(n);if(note.length()>4000)throw new IllegalArgumentException("Описание слишком длинное");
         if(snapshot().group(groupId)==null)throw new IllegalArgumentException("Группа не найдена");

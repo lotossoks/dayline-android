@@ -36,6 +36,28 @@ public final class AnalysisTest {
         eq(AnalysisMath.fillable(gaps,4,picked,base+9*H,base+12*H,now,0).size(),2,"all gaps includes long trailing gap");
         add(gaps,4,base+10*H,base+10*H+30000);small=AnalysisMath.fillable(gaps,4,picked,base+9*H,base+12*H,now,120000);eq(small.get(0)[0],base+10*H+30000,"target time always protected");
         List<long[]> future=AnalysisMath.fillable(data(),4,null,base,base+24*H,base+H,0);eq(future.get(0)[1],base+H,"filler excludes future");
+        densityTests(base);
         System.out.println("PASS: "+checks+" selection, averages and gap planning assertions");
     }
+    static void densityTests(long base){
+        double[] exposure=new double[AnalysisMath.BINS],all=new double[AnalysisMath.BINS],night=new double[AnalysisMath.BINS];Arrays.fill(exposure,300000);Arrays.fill(all,300000);
+        for(int i=0;i<12;i++){night[i]=300000;night[AnalysisMath.BINS-1-i]=300000;}
+        double[] full=AnalysisMath.density(all,exposure,30),none=AnalysisMath.density(null,exposure,30),curve=AnalysisMath.density(night,exposure,30);
+        double integral=0;for(int i=0;i<AnalysisMath.BINS;i++){near(full[i],1,"full occupancy stays 100 percent");near(none[i],0,"missing group stays zero");if(curve[i]<0||curve[i]>1)throw new AssertionError("KDE out of range");integral+=(curve[i]+curve[i+1])/2*5;}
+        near(curve[0],curve[AnalysisMath.BINS],"24-hour seam continuous");near(curve[6],curve[AnalysisMath.BINS-6],"sleep symmetric across midnight");near(integral,120,"kernel preserves two hours of occupied time");near(curve[144],0,"sleep does not leak to midday");
+        near(AnalysisMath.density(all,new double[AnalysisMath.BINS],30)[0],0,"no exposure no division by zero");
+        Snapshot shortSession=data();add(shortSession,1,base+9*H+15*60000,base+9*H+45*60000);add(shortSession,2,base+9*H+20*60000,base+9*H+40*60000);
+        Average avg=AnalysisMath.averages(shortSession,null,0,null,Z,base+24*H).all;
+        near(avg.occupiedBins.get(1L)[9*12+3],300000,"five-minute resolution retains quarter-hour boundary");near(avg.occupiedBins.get(1L)[9*12+2],0,"no hourly spreading before start");near(avg.occupiedBins.get(1L)[9*12+4],300000,"same-group overlap counted once in KDE");
+        double[] shortCurve=AnalysisMath.density(avg.occupiedBins.get(1L),avg.exposureBins,30);
+        near(shortCurve[9*12],shortCurve[10*12],"KDE centred on actual 09:30 session");
+        Average picked=AnalysisMath.averages(shortSession,Collections.singleton(2L),0,null,Z,base+24*H).all;near(picked.occupiedBins.get(1L)[9*12+3],0,"task exclusion also applies to density");
+        Snapshot partial=data();add(partial,1,base+9*H,base+10*H);Average two=AnalysisMath.averages(partial,null,0,null,Z,base+48*H).all;
+        double[] half=AnalysisMath.density(two.occupiedBins.get(1L),two.exposureBins,30);Average one=AnalysisMath.averages(partial,null,0,null,Z,base+24*H).all;double[] single=AnalysisMath.density(one.occupiedBins.get(1L),one.exposureBins,30);near(half[114],single[114]/2,"empty dates lower density without renormalizing each group");
+        ZoneId ny=ZoneId.of("America/New_York");LocalDate fall=LocalDate.of(2026,11,1);long start=TimeMath.start(fall,ny),end=TimeMath.start(fall.plusDays(1),ny);Snapshot dst=data();add(dst,1,start,end);Average repeated=AnalysisMath.averages(dst,null,0,null,ny,end).all;
+        near(repeated.exposureBins[12],600000,"repeated DST bins counted twice");double[] dstCurve=AnalysisMath.density(repeated.occupiedBins.get(1L),repeated.exposureBins,30);near(dstCurve[18],1,"DST numerator/exposure smooth together");
+        LocalDate spring=LocalDate.of(2026,3,8);start=TimeMath.start(spring,ny);end=TimeMath.start(spring.plusDays(1),ny);Snapshot missing=data();add(missing,1,start,end);Average skipped=AnalysisMath.averages(missing,null,0,null,ny,end).all;
+        near(skipped.exposureBins[24],0,"nonexistent clock bins have no exposure");near(AnalysisMath.density(skipped.occupiedBins.get(1L),skipped.exposureBins,30)[30],1,"missing DST hour is not a false gap");
+    }
+
 }

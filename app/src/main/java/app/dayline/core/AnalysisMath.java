@@ -15,12 +15,15 @@ public final class AnalysisMath {
         }
         return result;
     }
+    public static final int BIN_MINUTES=5, BINS=24*60/BIN_MINUTES;
     public static final class Average {
         public int days;
         public long sum,union,elapsed,untracked;
         public final Map<Long,Long> taskSum=new LinkedHashMap<>(),groupSum=new LinkedHashMap<>(),groupUnion=new LinkedHashMap<>();
         public final Map<Long,double[]> hourly=new LinkedHashMap<>();
         public final double[] exposure=new double[24],outside=new double[24];
+        public final Map<Long,double[]> occupiedBins=new LinkedHashMap<>();
+        public final double[] exposureBins=new double[BINS],outsideBins=new double[BINS];
         public long mean(long total){return days==0?0:Math.round((double)total/days);}
         public double share(long group,int hour){double[] values=hourly.get(group);return values==null||exposure[hour]==0?0:values[hour]/exposure[hour];}
         public double outsideShare(int hour){return exposure[hour]==0?0:outside[hour]/exposure[hour];}
@@ -52,17 +55,35 @@ public final class AnalysisMath {
             Average[] targets={out.all,out.weekdays[day.getDayOfWeek().getValue()-1]};
             for(Average target:targets){target.days++;target.sum+=sum;target.union+=union;target.elapsed+=finish-start;target.untracked+=untracked;for(Map.Entry<Long,Long> t:tasks.entrySet())target.taskSum.merge(t.getKey(),t.getValue(),Long::sum);}
             for(Map.Entry<Long,List<Session>> entry:perGroup.entrySet())for(Average target:targets){target.groupSum.merge(entry.getKey(),TimeMath.sum(entry.getValue(),start,finish,now),Long::sum);target.groupUnion.merge(entry.getKey(),TimeMath.union(entry.getValue(),start,finish,now),Long::sum);}
-            // Walk real hours: repeated DST hours contribute exposure twice; a missing hour contributes none.
-            for(ZonedDateTime cursor=day.atStartOfDay(zone);cursor.toInstant().toEpochMilli()<finish;cursor=cursor.plusHours(1)) {
-                long a=cursor.toInstant().toEpochMilli(),b=Math.min(finish,cursor.plusHours(1).toInstant().toEpochMilli());int hour=cursor.getHour();
-                for(Average target:targets){target.exposure[hour]+=b-a;target.outside[hour]+=b-a-TimeMath.union(rows,a,b,now);}
-                for(Map.Entry<Long,List<Session>> entry:perGroup.entrySet()) {
-                    long occupied=TimeMath.union(entry.getValue(),a,b,now);
-                    for(Average target:targets)target.hourly.computeIfAbsent(entry.getKey(),k->new double[24])[hour]+=occupied;
+            Map<Long,List<long[]>> merged=new LinkedHashMap<>();
+            for(Map.Entry<Long,List<Session>> entry:perGroup.entrySet())merged.put(entry.getKey(),TimeMath.merged(entry.getValue(),start,finish,now));
+            List<long[]> covered=TimeMath.merged(rows,start,finish,now);
+            // Real five-minute steps retain sub-hour structure and account for repeated DST hours.
+            for(ZonedDateTime cursor=day.atStartOfDay(zone);cursor.toInstant().toEpochMilli()<finish;cursor=cursor.plusMinutes(BIN_MINUTES)) {
+                long a=cursor.toInstant().toEpochMilli(),b=Math.min(finish,cursor.plusMinutes(BIN_MINUTES).toInstant().toEpochMilli());
+                int hour=cursor.getHour(),bin=hour*12+cursor.getMinute()/BIN_MINUTES;long outside=b-a-covered(covered,a,b);
+                for(Average target:targets){target.exposure[hour]+=b-a;target.outside[hour]+=outside;target.exposureBins[bin]+=b-a;target.outsideBins[bin]+=outside;}
+                for(Map.Entry<Long,List<long[]>> entry:merged.entrySet()) {
+                    long occupied=covered(entry.getValue(),a,b);
+                    for(Average target:targets){target.hourly.computeIfAbsent(entry.getKey(),k->new double[24])[hour]+=occupied;target.occupiedBins.computeIfAbsent(entry.getKey(),k->new double[BINS])[bin]+=occupied;}
                 }
             }
         }
         return out;
+    }
+    private static long covered(List<long[]> intervals,long start,long end){
+        long total=0;for(long[] interval:intervals){if(interval[0]>=end)break;total+=Math.max(0,Math.min(end,interval[1])-Math.max(start,interval[0]));}return total;
+    }
+    /** Circular Gaussian kernel estimate of occupancy, not a unit-area probability density.
+     * Numerator and exposure are smoothed separately; concurrent tasks in a group were merged earlier.
+     * Returned samples are at 00:00, 00:05, ... 24:00, with identical endpoints. */
+    public static double[] density(double[] occupied,double[] exposure,double bandwidthMinutes){
+        if(exposure.length!=BINS||(occupied!=null&&occupied.length!=BINS)||!Double.isFinite(bandwidthMinutes)||bandwidthMinutes<=0)throw new IllegalArgumentException("Invalid density inputs");
+        double[] result=new double[BINS+1];if(occupied==null)return result;
+        double[] weights=new double[BINS];
+        for(int j=0;j<BINS;j++){double distance=(j+.5)*BIN_MINUTES;distance=Math.min(distance,1440-distance);weights[j]=Math.exp(-.5*Math.pow(distance/bandwidthMinutes,2));}
+        for(int i=0;i<BINS;i++){double value=0,basis=0;for(int j=0;j<BINS;j++){double weight=weights[(j-i+BINS)%BINS];value+=weight*occupied[j];basis+=weight*exposure[j];}result[i]=basis==0?0:Math.max(0,Math.min(1,value/basis));}
+        result[BINS]=result[0];return result;
     }
     private static Map<LocalDate,List<Session>> splitByDay(List<Session> sessions,LocalDate first,LocalDate end,ZoneId zone,long now) {
         Map<LocalDate,List<Session>> map=new HashMap<>();if(!first.isBefore(end))return map;

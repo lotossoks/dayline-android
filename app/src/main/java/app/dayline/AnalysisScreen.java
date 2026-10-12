@@ -98,18 +98,27 @@ final class AnalysisScreen {
         add(body,label(a,outside()+": "+TimeMath.shortTime(current.mean(current.elapsed-current.union))+" в день"),12);selectionEntry();
         if(current.days==0){add(body,text(a,"Для этого дня пока нет истории",19,INK,true),24);add(body,label(a,"Средние показатели появятся, когда закончится хотя бы один подходящий день."),8);return;}
         LinearLayout chart=card(a);add(chart,text(a,"Как обычно проходит день",19,INK,true),0);
-        add(chart,label(a,"По одной линии на группу. Яркий участок — занятие чаще встречается в этот час, бледный — реже. Параллельные занятия остаются на своих линиях."),10);
+        LinearLayout views=row(a);chipIn(views,"Полосы",!a.averageKde,()->averageView(false));chipIn(views,"Кривые KDE",a.averageKde,()->averageView(true));
+        if(a.averageKde){TextView help=button(a,"?",false,()->new AlertDialog.Builder(a).setTitle("Как читать кривые").setMessage("Высота — сглаженная занятость в этот час по всей истории завершённых дней. 100% — занятие встречается каждый день, 50% — примерно половину времени.\n\nКривые не складываются: можно работать и учиться одновременно. Внутри группы пересечения объединены.\n\nСглаживание KDE: 30 минут. Переход через полночь непрерывен. Точные средние длительности без сглаживания указаны под названиями.\n\nНажмите название, чтобы выделить кривую; повторное нажатие вернёт все цвета. Выбор задач и дня недели действует на график.").setPositiveButton("Понятно",null).show());help.setContentDescription("Как читать кривые");views.addView(help,new LinearLayout.LayoutParams(dp(a,44),dp(a,44)));}add(chart,views,14);
         List<Group> groups=new ArrayList<>();for(Group g:data.groups)if(a.selectionActive||a.analysisGroup==0||a.analysisGroup==g.id)groups.add(g);
-        add(chart,new AverageChartView(a,current,groups,a.selectionActive?"Вне выбора":a.analysisGroup==0?"Не учтено":"Вне группы",(name,hour,share)->new AlertDialog.Builder(a).setTitle(name+" · "+String.format(Locale.ROOT,"%02d:00–%02d:00",hour,hour+1)).setMessage("Занято в среднем "+Math.round(share*100)+"% этого часа (примерно "+Math.round(share*60)+" мин из 60).\n\nЭто частота по истории, а не запланированное занятие.").setPositiveButton("Понятно",null).show()),16);
+        String outsideLabel=a.selectionActive?"Вне выбора":a.analysisGroup==0?"Не учтено":"Вне группы";
+        if(a.averageKde){
+            add(chart,label(a,"Выше кривая — чаще занятие в этот час. Общая шкала 0–100%, сглаживание 30 мин."),10);
+            DensityChartView.addTo(chart,current,groups,outsideLabel);
+        }else{
+            add(chart,label(a,"По одной линии на группу. Яркий участок — занятие чаще встречается в этот час, бледный — реже. Параллельные занятия остаются на своих линиях."),10);
+            add(chart,new AverageChartView(a,current,groups,outsideLabel,(name,hour,share)->new AlertDialog.Builder(a).setTitle(name+" · "+String.format(Locale.ROOT,"%02d:00–%02d:00",hour,hour+1)).setMessage("Занято в среднем "+Math.round(share*100)+"% этого часа (примерно "+Math.round(share*60)+" мин из 60).\n\nЭто частота по истории, а не запланированное занятие.").setPositiveButton("Понятно",null).show()),16);
+        }
         add(chart,button(a,"По часам текстом",false,()->hourlyText(current,groups)),12);add(body,chart,20);
         groupRows(Collections.emptyList(),0,0,current);
         // Keep unselected rows available so the user can add them without leaving selection mode.
-        Averages allTasks=AnalysisMath.averages(data,null,0,null,a.zone,now);Average base=a.averageWeekday==0?allTasks.all:allTasks.weekdays[a.averageWeekday-1];taskRows(0,0,base);
+        Averages allTasks=a.selectionActive||a.analysisGroup!=0?AnalysisMath.averages(data,null,0,null,a.zone,now):calculated;Average base=a.averageWeekday==0?allTasks.all:allTasks.weekdays[a.averageWeekday-1];taskRows(0,0,base);
         add(body,text(a,"Средняя неделя · по дням",20,INK,true),24);add(body,label(a,"Нажмите на день: откроются его средние длительности и почасовая лента."),8);
         for(int i=0;i<7;i++){int index=i+1;Average day=calculated.weekdays[i];String detail=day.days==0?"Пока нет завершённых дней":"Сумма "+TimeMath.shortTime(day.mean(day.sum))+"\nБез пересечений "+TimeMath.shortTime(day.mean(day.union))+" · дней: "+day.days;
             TextView line=button(a,WEEKDAYS[index]+"\n"+detail,false,()->{a.averageWeekday=index;refresh(false);});line.setGravity(Gravity.START|Gravity.CENTER_VERTICAL);line.setTextSize(14);add(body,line,8);}
         add(body,button(a,"＋ Задача или группа",false,a::addMenu),16);
     }
+    private void averageView(boolean kde){a.averageKde=kde;a.getPreferences(0).edit().putBoolean("averageKde",kde).apply();refresh(true);}
     private void taskRows(long from,long to,Average average){
         add(body,text(a,average==null?"По задачам":"Средние длительности задач",20,INK,true),24);add(body,label(a,"Зажмите задачу, чтобы выбрать несколько. После выбора достаточно обычного нажатия."),8);
         long now=System.currentTimeMillis();List<Task> tasks=new ArrayList<>(data.tasks);
