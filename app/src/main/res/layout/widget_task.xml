@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:layout_width="match_parent" android:layout_height="wrap_content" android:minHeight="72dp" android:orientation="horizontal" android:gravity="center_vertical" android:paddingVertical="6dp">
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:orientation="vertical" android:paddingStart="0dp" android:paddingEnd="10dp">
+        <TextView android:id="@+id/widget_task_name" android:layout_width="match_parent" android:layout_height="wrap_content" android:textSize="15sp" android:textStyle="bold" android:textColor="#203B33" android:maxLines="2" android:ellipsize="end" />
+        <TextView android:id="@+id/widget_task_group" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="4dp" android:textSize="12sp" android:textColor="#697A70" android:maxLines="1" android:ellipsize="end" />
+        <Chronometer android:id="@+id/widget_clock" android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="3dp" android:textSize="15sp" android:textColor="#216B58" android:fontFamily="monospace" android:visibility="gone" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_control" android:layout_width="48dp" android:layout_height="48dp" android:gravity="center" android:textSize="21sp" android:background="@drawable/widget_play" android:textColor="#216B58" />
+</LinearLayout>

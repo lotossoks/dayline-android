@@ -45,8 +45,10 @@ public final class MainActivity extends Activity {
         for(String id:getPreferences(0).getStringSet("selectedTasks",Collections.emptySet()))try{selectedTasks.add(Long.parseLong(id));}catch(NumberFormatException ignored){}
         if(saved!=null){if(saved.containsKey("exportTasks")){exportTasks=new LinkedHashSet<>();for(long id:saved.getLongArray("exportTasks"))exportTasks.add(id);}averageMode=saved.getBoolean("averageMode",false);averageWeekday=saved.getInt("averageWeekday",0);groupId=saved.getLong("group",1);analysisGroup=saved.getLong("analysisGroup",0);mode=saved.getInt("mode",0);weekly=saved.getBoolean("weekly",true);selectedDate=LocalDate.parse(saved.getString("date",LocalDate.now().toString()));query=saved.getString("query","");archived=saved.getBoolean("archived",false);exportGroup=saved.getLong("exportGroup",0);exportWeek=LocalDate.parse(saved.getString("exportWeek",LocalDate.now().toString()));}
         if(Build.VERSION.SDK_INT>=33)registerReceiver(receiver,new IntentFilter(TimerService.CHANGED),Context.RECEIVER_NOT_EXPORTED);else registerLegacyUpdates();
-        render(false);
+        if(saved==null)readWidgetIntent();render(false);
     }
+    private void readWidgetIntent(){if(getIntent().hasExtra("widgetGroup")){long target=getIntent().getLongExtra("widgetGroup",0);if(target>0)groupId=target;mode=0;query="";archived=false;getIntent().removeExtra("widgetGroup");}}
+    @Override protected void onNewIntent(Intent intent){super.onNewIntent(intent);setIntent(intent);readWidgetIntent();render(false);}
     @android.annotation.SuppressLint("UnspecifiedRegisterReceiverFlag")
     private void registerLegacyUpdates(){
         // Called only below API 33; a signature permission protects this legacy receiver.
@@ -149,12 +151,18 @@ public final class MainActivity extends Activity {
         selectionSummary=text(this,"",13,INK,true);selectionSummary.setContentDescription("Итоги выбранных задач");add(box,selectionSummary,3);root.addView(box);
     }
     void addMenu(){new AlertDialog.Builder(this).setTitle("Добавить").setItems(new String[]{"Задачу","Группу","Время вручную"},(d,w)->{Editors e=new Editors(this);if(w==0)e.task(null,analysisGroup==0?groupId:analysisGroup);if(w==1)e.group(null);if(w==2)e.session(null,0);}).show();}
-    private void settings(){new AlertDialog.Builder(this).setTitle("Dayline").setItems(new String[]{"Экспорт недели в Excel","Сохранить резервную копию","Восстановить из копии","Настройки уведомлений","Как работает учёт"},(d,w)->{
+    private void settings(){new AlertDialog.Builder(this).setTitle("Dayline").setItems(new String[]{"Экспорт недели в Excel","Сохранить резервную копию","Восстановить из копии","Настройки уведомлений","Как работает учёт","Виджет на рабочий стол"},(d,w)->{
         if(w==0)exportDialog();if(w==1)createDocument("application/json","dayline-backup-"+LocalDate.now()+".json",101);
         if(w==2){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,102);}
         if(w==3)startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE,getPackageName()));
-        if(w==4)new AlertDialog.Builder(this).setTitle("Всё под вашим контролем").setMessage("▶ запускает таймер, ■ останавливает. Можно заниматься несколькими задачами одновременно.\n\n«Стоп группы» останавливает только текущую группу. Сон также запускается вручную.\n\nДень начинается в 00:00, неделя — в понедельник. История хранится на телефоне. Таймеры продолжают считать по сохранённому времени, даже если приложение закрыто. После перезагрузки работающие таймеры тоже продолжаются.\n\nДля правки нажмите на отрезок ленты или запись в истории. Перенесённое время попадёт в выбранную задачу, остальные пересекающиеся занятия не изменятся.\n\nНа vivo разрешите уведомления и фоновую работу Dayline в настройках батареи, чтобы управление таймерами было доступно в шторке.\n\nExcel — готовый снимок выбранной недели. Для сохранения всей истории используйте резервную копию. В копии работающие сеансы завершаются на момент сохранения; текущие таймеры телефона продолжаются.\n\nDayline 1.2.0 · без рекламы и доступа к интернету").setPositiveButton("Понятно",null).show();
+        if(w==5)addWidget();
+        if(w==4)new AlertDialog.Builder(this).setTitle("Всё под вашим контролем").setMessage("▶ запускает таймер, ■ останавливает. Можно заниматься несколькими задачами одновременно.\n\n«Стоп группы» останавливает только текущую группу. Сон также запускается вручную.\n\nДень начинается в 00:00, неделя — в понедельник. История хранится на телефоне. Таймеры продолжают считать по сохранённому времени, даже если приложение закрыто. После перезагрузки работающие таймеры тоже продолжаются.\n\nДля правки нажмите на отрезок ленты или запись в истории. Перенесённое время попадёт в выбранную задачу, остальные пересекающиеся занятия не изменятся.\n\nНа vivo разрешите уведомления и фоновую работу Dayline в настройках батареи, чтобы управление таймерами было доступно в шторке.\n\nExcel — готовый снимок выбранной недели. Для сохранения всей истории используйте резервную копию. В копии работающие сеансы завершаются на момент сохранения; текущие таймеры телефона продолжаются.\n\nDayline 1.3.0 · без рекламы и доступа к интернету").setPositiveButton("Понятно",null).show();
     }).show();}
+    void addWidget(){
+        android.appwidget.AppWidgetManager manager=android.appwidget.AppWidgetManager.getInstance(this);
+        if(manager.isRequestPinAppWidgetSupported()&&manager.requestPinAppWidget(new ComponentName(this,TimerWidget.class),null,null))return;
+        new AlertDialog.Builder(this).setTitle("Добавить виджет Dayline").setMessage("Зажмите свободное место на рабочем столе → Виджеты → Dayline · таймеры. Перетащите виджет на экран.\n\nКнопка ⚙ в виджете выбирает группу, а ▶ и ■ управляют задачами.").setPositiveButton("Понятно",null).show();
+    }
     void exportDialog(){
         LinearLayout form=column(this);pad(form,20,8);LocalDate week=TimeMath.monday(mode==0?LocalDate.now():selectedDate);
         add(form,text(this,"Неделя с "+week.format(DateTimeFormatter.ofPattern("d MMMM",TimeMath.RU)),17,INK,true),0);

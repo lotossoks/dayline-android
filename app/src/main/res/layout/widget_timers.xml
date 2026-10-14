@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@android:id/background"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
+    android:padding="12dp" android:background="@drawable/widget_background">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_title" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center_vertical" android:text="@string/widget_brand" android:textSize="22sp" android:textStyle="bold" android:textColor="#203B33" android:contentDescription="@string/widget_open" />
+        <TextView android:id="@+id/widget_refresh" android:layout_width="48dp" android:layout_height="48dp" android:gravity="center" android:text="@string/widget_refresh_symbol" android:textSize="26sp" android:textColor="#216B58" android:contentDescription="@string/widget_refresh" />
+        <TextView android:id="@+id/widget_settings" android:layout_width="48dp" android:layout_height="48dp" android:gravity="center" android:text="@string/widget_settings_symbol" android:textSize="23sp" android:textColor="#216B58" android:contentDescription="@string/widget_settings" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_scope" android:layout_width="match_parent" android:layout_height="wrap_content" android:paddingBottom="8dp" android:maxLines="2" android:ellipsize="end" android:text="@string/widget_description" android:textSize="12sp" android:textColor="#697A70" />
+    <FrameLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1">
+        <LinearLayout android:id="@+id/widget_tasks" android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical" />
+        <TextView android:id="@+id/widget_empty" android:layout_width="match_parent" android:layout_height="match_parent" android:gravity="center" android:padding="8dp" android:text="@string/widget_empty" android:textColor="#697A70" android:textSize="14sp" />
+    </FrameLayout>
+    <LinearLayout android:id="@+id/widget_pages" android:layout_width="match_parent" android:layout_height="48dp" android:gravity="center_vertical">
+        <TextView android:id="@+id/widget_previous" android:layout_width="48dp" android:layout_height="48dp" android:gravity="center" android:text="@string/widget_previous_symbol" android:contentDescription="@string/widget_previous" android:textSize="22sp" />
+        <TextView android:id="@+id/widget_page" android:layout_width="0dp" android:layout_height="match_parent" android:layout_weight="1" android:gravity="center" android:textSize="13sp" android:textColor="#697A70" />
+        <TextView android:id="@+id/widget_next" android:layout_width="48dp" android:layout_height="48dp" android:gravity="center" android:text="@string/widget_next_symbol" android:contentDescription="@string/widget_next" android:textSize="22sp" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_open" android:layout_width="match_parent" android:layout_height="44dp" android:gravity="center" android:text="@string/widget_open" android:textColor="#216B58" android:textSize="14sp" android:textStyle="bold" />
+</LinearLayout>

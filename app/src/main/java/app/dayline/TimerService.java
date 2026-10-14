@@ -10,7 +10,7 @@ public final class TimerService extends Service {
     public static final String CHANGED="app.dayline.CHANGED";
     private static final String CHANNEL="active_timers";
     public static void sync(Context context) {
-        Intent i=new Intent(context,TimerService.class);
+        TimerWidget.refresh(context);Intent i=new Intent(context,TimerService.class);
         if(Store.get(context).snapshot().runningCount(0)>0)context.startForegroundService(i);else context.stopService(i);
     }
     @Override public void onCreate() {
@@ -21,7 +21,7 @@ public final class TimerService extends Service {
         Store store=Store.get(this);
         if(intent!=null&&"STOP_GROUP".equals(intent.getAction())) {
             long id=intent.getLongExtra("group",-1);if(id>0)store.stopGroup(id,System.currentTimeMillis());
-            sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));
+            TimerWidget.refresh(this);sendBroadcast(new Intent(CHANGED).setPackage(getPackageName()));
         }
         Snapshot data=store.snapshot();int count=data.runningCount(0);
         if(count==0) { stopForeground(STOP_FOREGROUND_REMOVE);stopSelf();return START_NOT_STICKY; }

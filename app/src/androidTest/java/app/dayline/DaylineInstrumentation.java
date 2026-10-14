@@ -17,6 +17,7 @@ public final class DaylineInstrumentation extends Instrumentation {
     @Override public void onStart(){
         Bundle result=new Bundle();
         try{
+            if("true".equals(options.getString("widget"))){int count=new WidgetChecks(this).launcher();result.putString("stream","PASS: "+count+" launcher widget assertions.\n");finish(Activity.RESULT_OK,result);return;}
             if("true".equals(options.getString("analysis"))){analysisSmoke();result.putString("stream","PASS: "+checks+" analysis UI assertions.\n");finish(Activity.RESULT_OK,result);return;}
             if("true".equals(options.getString("timeline"))){timelineSmoke();result.putString("stream","PASS: "+checks+" timeline rendering assertions.\n");finish(Activity.RESULT_OK,result);return;}
             if("true".equals(options.getString("seed"))){seed();result.putString("stream","Demo data installed in debug app only.\n");finish(Activity.RESULT_OK,result);return;}
@@ -49,7 +50,7 @@ public final class DaylineInstrumentation extends Instrumentation {
             store.restore(backup,now+1000);check(store.snapshot().runningCount(0)==0,"restore snapshot is stopped");check(store.snapshot().task(a).note.equals("Описание"),"notes retained");
             int rows=store.snapshot().sessions.size();try{store.restore("{\"format\":\"other\"}",now);throw new AssertionError("bad backup");}catch(IllegalArgumentException expected){}check(store.snapshot().sessions.size()==rows,"invalid restore preserves data");
             store.saveTask(a,life,"Переименована","Новое описание");check(store.snapshot().task(a).groupId==life,"task movement");
-            store.close();c.deleteDatabase("dayline-test.db");gapTests(c,now);groupTests(c,now);
+            store.close();c.deleteDatabase("dayline-test.db");gapTests(c,now);groupTests(c,now);checks+=new WidgetChecks(this).store();
             Intent launch=new Intent(c,MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);Activity activity=startActivitySync(launch);waitForIdleSync();check(activity!=null,"activity launched");
             result.putString("stream","PASS: "+checks+" Android assertions; SQLite, lifecycle and main activity.\n");finish(Activity.RESULT_OK,result);
         }catch(Throwable e){result.putString("stream","FAIL: "+e+"\n"+android.util.Log.getStackTraceString(e));finish(Activity.RESULT_CANCELED,result);}

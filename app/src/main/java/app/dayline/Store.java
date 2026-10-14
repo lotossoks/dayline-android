@@ -27,11 +27,13 @@ public final class Store extends SQLiteOpenHelper {
     }
     @Override public void onUpgrade(SQLiteDatabase db,int oldVersion,int newVersion) { throw new IllegalStateException("Неизвестная версия базы. Сохраните резервную копию."); }
     private static long insertGroup(SQLiteDatabase db,String name,int color) { ContentValues v=new ContentValues();v.put("name",name);v.put("color",color);return db.insertOrThrow("groups",null,v); }
-    public synchronized Snapshot snapshot() {
+    public synchronized Snapshot snapshot() { return readSnapshot(false); }
+    public synchronized Snapshot widgetSnapshot() { return readSnapshot(true); }
+    private Snapshot readSnapshot(boolean runningOnly) {
         SQLiteDatabase db=getReadableDatabase();Snapshot s=new Snapshot();
         try(Cursor c=db.rawQuery("SELECT id,name,color FROM groups ORDER BY id",null)) { while(c.moveToNext())s.groups.add(new Group(c.getLong(0),c.getString(1),c.getInt(2))); }
         try(Cursor c=db.rawQuery("SELECT id,group_id,name,note,archived FROM tasks ORDER BY id",null)) { while(c.moveToNext())s.tasks.add(new Task(c.getLong(0),c.getLong(1),c.getString(2),c.getString(3),c.getInt(4)!=0)); }
-        try(Cursor c=db.rawQuery("SELECT id,task_id,started,ended FROM sessions ORDER BY started DESC,id DESC",null)) { while(c.moveToNext())s.sessions.add(new Session(c.getLong(0),c.getLong(1),c.getLong(2),c.isNull(3)?0:c.getLong(3))); }
+        try(Cursor c=db.rawQuery("SELECT id,task_id,started,ended FROM sessions "+(runningOnly?"WHERE ended IS NULL ":"")+"ORDER BY started DESC,id DESC",null)) { while(c.moveToNext())s.sessions.add(new Session(c.getLong(0),c.getLong(1),c.getLong(2),c.isNull(3)?0:c.getLong(3))); }
         return s;
     }
     private static String name(String s) { String n=s.trim();if(n.isEmpty())throw new IllegalArgumentException("Введите название");if(n.length()>120)throw new IllegalArgumentException("Название должно быть не длиннее 120 символов");return n; }
@@ -71,6 +73,16 @@ public final class Store extends SQLiteOpenHelper {
             }
             db.setTransactionSuccessful();
         }finally { db.endTransaction(); }
+    }
+    /** Start/stop intents from an old launcher frame must be safe to deliver more than once. */
+    public synchronized boolean controlTimer(long taskId,long expectedSessionId,long expectedStart,long now) {
+        SQLiteDatabase db=getWritableDatabase();db.beginTransaction();
+        try {
+            Snapshot data=snapshot();Task task=data.task(taskId);if(task==null||task.archived)throw new IllegalArgumentException("Задача уже изменена");Session current=data.running(taskId);
+            if(expectedSessionId==0){if(current!=null)return false;checkOverlap(data,taskId,now,Long.MAX_VALUE,0);insertSession(db,0,taskId,now,0);}
+            else {if(current==null||current.id!=expectedSessionId||current.start!=expectedStart)return false;stop(db,current,now);}
+            db.setTransactionSuccessful();undoSessions=null;return true;
+        }finally {db.endTransaction();}
     }
     private static void stop(SQLiteDatabase db,Session s,long now) {
         if(now<=s.start) { db.delete("sessions","id=?",new String[]{""+s.id});return; }

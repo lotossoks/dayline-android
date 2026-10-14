@@ -1,0 +1,18 @@
+<resources>
+    <string name="widget_previous_symbol" translatable="false">‹</string>
+    <string name="widget_next_symbol" translatable="false">›</string>
+    <string name="widget_previous">Предыдущие задачи</string>
+    <string name="widget_next">Следующие задачи</string>
+    <string name="widget_brand" translatable="false">Dayline</string>
+    <string name="widget_refresh_symbol" translatable="false">↻</string>
+    <string name="widget_settings_symbol" translatable="false">⚙</string>
+    <string name="widget_name">Dayline · таймеры</string>
+    <string name="widget_description">Задачи и активные таймеры</string>
+    <string name="widget_open">Открыть Dayline</string>
+    <string name="widget_refresh">Обновить таймеры</string>
+    <string name="widget_settings">Настроить группу виджета</string>
+    <string name="widget_empty">Здесь пока нет открытых задач.\nНажмите, чтобы добавить в Dayline.</string>
+    <string name="widget_preview_active">● Задача в работе       ■\n00:24:15</string>
+    <string name="widget_preview_start">Следующая задача      ▶</string>
+    <item type="id" name="widget_group_choice" />
+</resources>
