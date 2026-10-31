@@ -129,6 +129,8 @@
 ./gradlew :app:assembleDebug :app:assembleDebugAndroidTest :app:lintDebug
 ```
 
+Локальные инструменты можно хранить в `android-build/` внутри проекта: SDK — в `android-build/sdk`, кэши и скачанные дистрибутивы — рядом. В этом случае укажите `sdk.dir=android-build/sdk` в `local.properties`. Оба пути исключены из Git; после клонирования SDK нужно установить отдельно.
+
 Тесты на Android-устройстве или эмуляторе:
 
 ```bash

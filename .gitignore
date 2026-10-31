@@ -32,3 +32,6 @@ dist/
 node_modules/
 __pycache__/
 .venv/
+
+# Local Android SDK, tools, downloads and dependency caches
+/android-build/
